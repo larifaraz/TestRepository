@@ -1,0 +1,104 @@
+pipeline{
+    
+    parameters {
+        
+        string(name: 'environment', defaultValue: 'terraform', description: 'Workspace/environment file to use for deployment')
+        booleanParam(name: 'autoApprove', defaultValue: false, description: 'Automatically run apply after generating plan?')
+    }
+    
+    environment {
+        AWS_ACCESS_KEY_ID     = credentials('AWS_ACCESS_KEY_ID')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
+    }
+    
+    tools {
+      terraform 'Terraform'
+    }
+    
+    agent any
+    
+    stages{
+       stage('scm checkout'){
+           steps{
+               git branch: 'main', credentialsId: '1e304207-fc37-4dfc-a78a-b711d9c3c924', url: 'https://github.com/faraz300692/ContinousTerraformDeployment.git'
+            } 
+        }
+        // stage('slack integration'){
+        //   steps{
+        //       slackSend baseUrl: 'https://hooks.slack.com/services/', channel: '#jenkinsalerts', color: 'good', message: 'Terraform Delete Approval', teamDomain: 'learninswag', tokenCredentialId: 'slack-demo', username: 'learninswag'
+        //     } 
+        // }
+        // stage('slack notification'){
+        //     steps{
+        //       slackSend (channel: "#slack-channel", color: '#4286f4', message: "Deploy Approval: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.JOB_DISPLAY_URL})")
+        //         script {
+        //             try {
+        //                 timeout(time:30, unit:'MINUTES') {
+        //                     env.APPROVE_PROD = input message: 'Deploy to Production', ok: 'Continue',
+        //                         parameters: [choice(name: 'APPROVE_PROD', choices: 'YES\nNO', description: 'Deploy from STAGING to PRODUCTION?')]
+        //                     if (env.APPROVE_PROD == 'YES'){
+        //                         env.DPROD = true
+        //                     } else {
+        //                         env.DPROD = false
+        //                     }
+        //                 }
+        //             } catch (error) {
+        //                 env.DPROD = true
+        //                 echo 'Timeout has been reached! Deploy to PRODUCTION automatically activated'
+        //             }
+        //         }
+        //     }
+        // }
+       stage('Terraform Plan') {
+            steps {
+                sh 'pwd;cd environment/ ; terraform init -input=false'
+                // sh 'pwd;cd environment/ ; terraform workspace new ${environment}'
+                sh 'pwd;cd environment/ ; terraform workspace select ${environment}'
+                sh "pwd;cd environment/ ; terraform plan -input=false -out tfplan "
+                sh 'pwd;cd environment/ ; terraform show -no-color tfplan > tfplan.txt'
+            }
+        }
+        
+       stage('Approval For Apply') {
+          when {
+              not {
+                  equals expected: true, actual: params.autoApprove
+              }
+          }
+
+          steps {
+             slackSend baseUrl: 'https://hooks.slack.com/services/', channel: '#jenkinsalerts', color: 'good', message: 'Terraform Apply Approval', teamDomain: 'learninswag', tokenCredentialId: 'slack-demo', username: 'learninswag'
+            // mail bcc: '', body: 'Below is your terraform plan output', cc: '', from: '', replyTo: '', subject: 'Terraform Plan output', to: 'lari.faraz01@gmail.com'
+               script {
+                    emailext attachmentsPattern: 'environment/tfplan.txt', body: 'testing', subject: 'test', to: 'lari.faraz01@gmail.com'
+                    slackUploadFile channel: '#jenkinsalerts', credentialId: '	Jenkins-SlackBotIntegration', filePath: 'environment/tfplan.txt', initialComment: 'Below is your Terraform Plan output. Kindly check and Apply for approval in Jenkins Pipeline'
+                    def plan = readFile 'environment/tfplan.txt'
+                    input message: "Do you want to apply the plan?",
+                    parameters: [text(name: 'Plan', description: 'Please review the plan', defaultValue: plan)]
+              }
+          }
+       }
+       
+       stage('Terraform Apply') {
+            steps {
+                sh "pwd;cd environment ; terraform apply -input=false tfplan"
+            }
+        }
+        
+        stage('Approval for Terraform Destroy') {
+            agent none
+            steps {
+                script {
+                    def deploymentDelay = input id: 'Destroy', message: 'Destroy the resources?', parameters: [choice(choices: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24'], description: 'Hours to delay Sandbox?', name: 'deploymentDelay')]
+                    sleep time: deploymentDelay.toInteger(), unit: 'HOURS'
+                }
+            }
+        }
+        
+        stage('Terraform Destroy') {
+            steps {
+                sh "pwd;cd environment ; terraform destroy --auto-approve"
+            }
+        }
+    }
+}

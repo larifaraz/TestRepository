@@ -1,0 +1,99 @@
+def region      = "ap-south-1"
+def creds       = "GauravAccount"
+def image       = "jenkins"
+def registryurl = "002993940769.dkr.ecr.ap-south-1.amazonaws.com/${image}"
+
+pipeline {
+    
+    agent any
+    
+    tools {
+      dockerTool 'Docker' 
+    }
+    
+    parameters {
+        booleanParam defaultValue: true, description: 'Trying Parameters for once', name: 'newtry'
+        string defaultValue: 'hello', description: 'Trying string Parameters for once', name: 'trystringparameter'
+    }
+    
+    environment{
+        git_commit_hash = sh(script: 'git describe --tags --always', returnStdout: true).trim()
+    }
+
+    stages {
+        stage('Git Checkout'){
+            steps{
+                git branch: 'main', credentialsId: '1e304207-fc37-4dfc-a78a-b711d9c3c924', url: 'https://github.com/faraz300692/ContinousTerraformDeployment.git'
+            }
+        }
+        
+        stage('ECR Login'){
+            steps{
+                script {
+                    docker.withRegistry('https://002993940769.dkr.ecr.ap-south-1.amazonaws.com', 'ecr:ap-south-1:GauravAccount'){
+                    }
+                }
+            }
+        }
+        
+        stage('Docker Build'){
+            steps{
+                echo "Building Docker Image"
+                sh "docker build -t ${registryurl}:${git_commit_hash} ."
+            }
+        }
+        
+        stage('Docker Push to ECR'){
+            steps{
+                script {
+                    docker.withRegistry('https://002993940769.dkr.ecr.ap-south-1.amazonaws.com', 'ecr:ap-south-1:GauravAccount'){
+                        echo "Pushing Docker Image to ECR"
+                        sh "docker push ${registryurl}:${git_commit_hash}"
+                    }
+                }
+            }
+        }
+        // stage('Approval'){
+        //     when{
+        //         expression{
+        //             params.newtry == true
+        //         }
+        //     }
+        //     steps{
+        //         script{
+        //           input message: "Try to learn groovy..?"
+        //           def newtextparam = echo "Groovy Lover"
+        //           parameters: [text(defaultValue: 'Please learn groovy', description: 'Learning Groovy', name: 'newtextparam')] 
+        //         }
+        //     }
+        // }
+        
+        // stage(CheckingApproval){
+        //     steps{
+        //         script{
+        //           def testingchoice = input message: "Delay in deployment", parameters: [choice(choices: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'], description: 'checking choice parameters', name: 'testingchoice')]
+        //           sleep time: testingchoice.toInteger(), unit: 'HOURS'
+        //         }
+        //     }
+        // }
+        stage('Deploy to Kubernetes'){
+            steps{
+                script{
+                  sh "chmod +x changeTag.sh"
+                  sh "./changeTag.sh ${git_commit_hash}"
+                  withCredentials([kubeconfigFile(credentialsId: 'minkubecluster', variable: 'KUBECONFIG')]) {
+                      docker.withRegistry('https://002993940769.dkr.ecr.ap-south-1.amazonaws.com', 'ecr:ap-south-1:GauravAccount'){
+                          sh "kubectl apply -f php-hello.yaml"
+                      }
+                  }
+                //   withCredentials([kubeconfigFile(credentialsId: 'minikubeCluster', variable: 'KUBECONFIG')]) {
+                    //   sh 'curl -LO "https://storage.googleapis.com/kubernetes-release/release/v1.20.5/bin/linux/amd64/kubectl"'  
+                    //   sh 'chmod +x ./kubectl'
+                    //   sh 'mkdir -p ~/.local/bin/kubectl'
+                    //   sh 'mv ./kubectl ~/.local/bin/kubectl'
+                    //   sh "kubectl apply -f php-hello.yaml"
+                }
+            }
+        }
+    }
+}
